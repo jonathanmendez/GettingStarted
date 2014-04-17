@@ -6,130 +6,134 @@ Ext.define('CustomApp', {
     extend: 'Rally.app.App',      // The parent class manages the app 'lifecycle' and calls launch() when ready
     componentCls: 'app',          // CSS styles found in app.css
 
+    items: [
+        {
+            xtype: 'container',
+            itemId: 'pulldown-container',
+            layout: {
+                type: 'hbox',
+                align: 'stretch'
+            }
+        }
+    ],
 
-    defectStore: undefined,       // app level references to the store and grid for easy access in various methods
+    defectStore: undefined,
     defectGrid: undefined,
 
     // Entry Point to App
     launch: function() {
+      var me = this;
 
-      console.log('our second app');     // see console api: https://developers.google.com/chrome-developer-tools/docs/console-api
+      console.log('our second app');
 
-      this.pulldownContainer = Ext.create('Ext.container.Container', {    // this container lets us control the layout of the pulldowns; they'll be added below
-        id: 'pulldown-container-id',
-        layout: {
-                type: 'hbox',           // 'horizontal' layout
-                align: 'stretch'
-            }
-      });
-
-      this.add(this.pulldownContainer); // must add the pulldown container to the app to be part of the rendering lifecycle, even though it's empty at the moment
-
-      this._loadIterations();
+      me._loadIterations();
     },
 
     // create iteration pulldown and load iterations
     _loadIterations: function() {
-        this.iterComboBox = Ext.create('Rally.ui.combobox.IterationComboBox', {
+        var me = this;
+        var iterComboBox = Ext.create('Rally.ui.combobox.IterationComboBox', {
+          itemId: 'iteration-combobox',
+          allowNoEntry: true,
           fieldLabel: 'Iteration',
           labelAlign: 'right',
           width: 300,
           listeners: {
-            ready: function(combobox) {             // on ready: during initialization of the app, once Iterations are loaded, lets go get Defect Severities
-                 this._loadSeverities();
-           },
-        select: function(combobox, records) {   // on select: after the app has fully loaded, when the user 'select's an iteration, lets just relaod the data
-                 this._loadData();
-           },
-           scope: this
-         }
+              ready: me._loadSeverities,
+              select: me._loadData,
+              scope: me
+          }
         });
 
-        this.pulldownContainer.add(this.iterComboBox);   // add the iteration list to the pulldown container so it lays out horiz, not the app!
-     },
+        me.down('#pulldown-container').add(iterComboBox);
+    },
 
     // create defect severity pulldown then load data
     _loadSeverities: function() {
-        this.severityComboBox = Ext.create('Rally.ui.combobox.FieldValueComboBox', {
+        var me = this;
+        var severityComboBox = Ext.create('Rally.ui.combobox.FieldValueComboBox', {
+          itemId: 'severity-combobox',
           model: 'Defect',
           field: 'Severity',
           fieldLabel: 'Severity',
           labelAlign: 'right',
           listeners: {
-            ready: function(combobox) {             // this is the last 'data' pulldown we're loading so both events go to just load the actual defect data
-                 this._loadData();
-           },
-            select: function(combobox, records) {
-                 this._loadData();
-           },
-           scope: this                              // <--- don't for get to pass the 'app' level scope into the combo box so the async event functions can call app-level func's!
+            ready: me._loadData,
+            select: me._loadData,
+            scope: me
          }
 
         });
 
-        this.pulldownContainer.add(this.severityComboBox);    // add the severity list to the pulldown container so it lays out horiz, not the app!
+        me.down('#pulldown-container').add(severityComboBox);
      },
+
+    _getFilters: function(iterationValue, severityValue) {
+      var iterationFilter = Ext.create('Rally.data.wsapi.Filter', {
+          property: 'Iteration',
+          operation: '=',
+          value: iterationValue
+      });
+
+      var severityFilter = Ext.create('Rally.data.wsapi.Filter', {
+          property: 'Severity',
+          operation: '=',
+          value: severityValue
+      });
+      
+      return iterationFilter.and(severityFilter);
+    },
 
     // Get data from Rally
     _loadData: function() {
+      var me = this;
 
-      var selectedIterRef = this.iterComboBox.getRecord().get('_ref');              // the _ref is unique, unlike the iteration name that can change; lets query on it instead!
-      var selectedSeverityValue = this.severityComboBox.getRecord().get('value');   // remember to console log the record to see the raw data and relize what you can pluck out
+      var selectedIterRef = me.down('#iteration-combobox').getRecord().get('_ref');
+      var selectedSeverityValue = me.down('#severity-combobox').getRecord().get('value');
 
-      console.log('selected iter', selectedIterRef);
-      console.log('selected severity', selectedSeverityValue);
+      var myFilters = me._getFilters(selectedIterRef, selectedSeverityValue);
 
-      var myFilters = [                   // in this format, these are AND'ed together; use Rally.data.wsapi.Filter to create programatic AND/OR constructs
-            {
-              property: 'Iteration',
-              operation: '=',
-              value: selectedIterRef
-            },
-            {
-              property: 'Severity',
-              operation: '=',
-              value: selectedSeverityValue
-            }
-          ];
+      console.log("filters", myFilters.toString());
 
       // if store exists, just load new data
-      if (this.defectStore) {
+      if (me.defectStore) {
         console.log('store exists');
-        this.defectStore.setFilter(myFilters);
-        this.defectStore.load();
+        me.defectStore.setFilter(myFilters);
+        me.defectStore.load();
 
       // create store
       } else {
         console.log('creating store');
-        this.defectStore = Ext.create('Rally.data.wsapi.Store', {     // create defectStore on the App (via this) so the code above can test for it's existence!
+        me.defectStore = Ext.create('Rally.data.wsapi.Store', {
           model: 'Defect',
-          autoLoad: true,                         // <----- Don't forget to set this to true! heh
+          autoLoad: true,
           filters: myFilters,
           listeners: {
               load: function(myStore, myData, success) {
                   console.log('got data!', myStore, myData);
-                  if (!this.defectGrid) {           // only create a grid if it does NOT already exist
-                    this._createGrid(myStore);      // if we did NOT pass scope:this below, this line would be incorrectly trying to call _createGrid() on the store which does not exist.
+                  if (!me.defectGrid) {
+                    me._createGrid(myStore);
                   }
               },
-              scope: this                         // This tells the wsapi data store to forward pass along the app-level context into ALL listener functions
+              scope: me
           },
-          fetch: ['FormattedID', 'Name', 'Severity', 'Iteration']   // Look in the WSAPI docs online to see all fields available!
+          fetch: ['FormattedID', 'Name', 'Severity', 'Iteration']
         });
       }
     },
 
     // Create and Show a Grid of given defect
     _createGrid: function(myDefectStore) {
+      var me = this;
 
-      this.defectGrid = Ext.create('Rally.ui.grid.Grid', {
+      me.defectGrid = Ext.create('Rally.ui.grid.Grid', {
         store: myDefectStore,
-        columnCfgs: [         // Columns to display; must be the same names specified in the fetch: above in the wsapi data store
+        columnCfgs: [
           'FormattedID', 'Name', 'Severity', 'Iteration'
         ]
       });
 
-      this.add(this.defectGrid);       // add the grid Component to the app-level Container (by doing this.add, it uses the app container)
+      me.add(me.defectGrid);
 
     }
 
